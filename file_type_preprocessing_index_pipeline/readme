@@ -1,0 +1,136 @@
+Overview
+In this tutorial, you’ll build an indexing pipeline that preprocesses different types of files (markdown, txt and pdf). Each file will have its own FileConverter. The rest of the indexing pipeline is fairly standard - split the documents into chunks, trim whitespace, create embeddings and write them to a Document Store.
+
+Optionally, you can keep going to see how to use these documents in a query pipeline as well.
+
+Installing dependencies
+%%bash
+pip install haystack-ai huggingface-api-haystack
+pip install sentence-transformers-haystack
+pip install markdown-it-py mdit_plain pypdf
+pip install gdown
+Download All Files
+Files that you will use in this tutorial are stored in a GDrive folder. Either download files directly from the GDrive folder or run the code below. If you’re running this tutorial on colab, you’ll find the downloaded files under “/recipe_files” folder in “files” tab on the left.
+
+Just like most real life data, these files are a mishmash of different types.
+
+import gdown
+
+url = "https://drive.google.com/drive/folders/1n9yqq5Gl_HWfND5bTlrCwAOycMDt5EMj"
+output_dir = "recipe_files"
+
+gdown.download_folder(url, quiet=True, output=output_dir)
+Create a Pipeline to Index Documents
+Next, you’ll create a pipeline to index documents. To keep things uncomplicated, you’ll use an InMemoryDocumentStore but this approach would also work with any other flavor of DocumentStore.
+
+You’ll need a different file converter class for each file type in our data sources: .pdf, .txt, and .md in this case. Our FileTypeRouter connects each file type to the proper converter.
+
+from haystack.components.writers import DocumentWriter
+from haystack.components.converters import MarkdownToDocument, PyPDFToDocument, TextFileToDocument
+from haystack.components.preprocessors import DocumentSplitter, DocumentCleaner
+from haystack.components.routers import FileTypeRouter
+from haystack_integrations.components.embedders.sentence_transformers import SentenceTransformersDocumentEmbedder
+from haystack import Pipeline
+from haystack.document_stores.in_memory import InMemoryDocumentStore
+
+document_store = InMemoryDocumentStore()
+file_type_router = FileTypeRouter(mime_types=["text/plain", "application/pdf", "text/markdown"])
+text_file_converter = TextFileToDocument()
+markdown_converter = MarkdownToDocument()
+pdf_converter = PyPDFToDocument()
+From there, the steps to this indexing pipeline are a bit more standard. The DocumentCleaner removes whitespace. Then this DocumentSplitter breaks them into chunks of 150 words, with a bit of overlap to avoid missing context.
+
+document_cleaner = DocumentCleaner()
+document_splitter = DocumentSplitter(split_by="word", split_length=150, split_overlap=50)
+Now you’ll add a SentenceTransformersDocumentEmbedder to create embeddings from the documents. As the last step in this pipeline, the DocumentWriter will write them to the InMemoryDocumentStore.
+
+document_embedder = SentenceTransformersDocumentEmbedder(model="sentence-transformers/all-MiniLM-L6-v2")
+document_writer = DocumentWriter(document_store)
+After creating all the components, add them to the indexing pipeline.
+
+preprocessing_pipeline = Pipeline()
+preprocessing_pipeline.add_component(instance=file_type_router, name="file_type_router")
+preprocessing_pipeline.add_component(instance=text_file_converter, name="text_file_converter")
+preprocessing_pipeline.add_component(instance=markdown_converter, name="markdown_converter")
+preprocessing_pipeline.add_component(instance=pdf_converter, name="pypdf_converter")
+preprocessing_pipeline.add_component(instance=document_cleaner, name="document_cleaner")
+preprocessing_pipeline.add_component(instance=document_splitter, name="document_splitter")
+preprocessing_pipeline.add_component(instance=document_embedder, name="document_embedder")
+preprocessing_pipeline.add_component(instance=document_writer, name="document_writer")
+Next, connect them 👇
+
+preprocessing_pipeline.connect("file_type_router.text/plain", "text_file_converter.sources")
+preprocessing_pipeline.connect("file_type_router.application/pdf", "pypdf_converter.sources")
+preprocessing_pipeline.connect("file_type_router.text/markdown", "markdown_converter.sources")
+preprocessing_pipeline.connect("text_file_converter", "document_cleaner")
+preprocessing_pipeline.connect("pypdf_converter", "document_cleaner")
+preprocessing_pipeline.connect("markdown_converter", "document_cleaner")
+preprocessing_pipeline.connect("document_cleaner", "document_splitter")
+preprocessing_pipeline.connect("document_splitter", "document_embedder")
+preprocessing_pipeline.connect("document_embedder", "document_writer")
+Let’s test this pipeline with a few recipes I’ve written. Are you getting hungry yet?
+
+from pathlib import Path
+
+preprocessing_pipeline.run({"file_type_router": {"sources": list(Path(output_dir).glob("**/*"))}})
+🎉 If you only wanted to learn how to preprocess documents, you can stop here! If you want to see an example of using those documents in a RAG pipeline, read on.
+
+(Optional) Build a pipeline to query documents
+Now, let’s build a RAG pipeline that answers queries based on the documents you just created in the section above. For this step, we will be using the HuggingFaceAPIChatGenerator so must have a Hugging Face API Key for this section. We will be using the Qwen/Qwen3.5-9B model.
+
+import os
+from getpass import getpass
+
+if "HF_API_TOKEN" not in os.environ:
+    os.environ["HF_API_TOKEN"] = getpass("Enter Hugging Face token:")
+In this step you’ll build a query pipeline to answer questions about the documents.
+
+This pipeline takes the prompt, searches the document store for relevant documents, and passes those documents along to the LLM to formulate an answer.
+
+⚠️ Notice how we used sentence-transformers/all-MiniLM-L6-v2 to create embeddings for our documents before. This is why we will be using the same model to embed incoming questions.
+
+from haystack_integrations.components.embedders.sentence_transformers import SentenceTransformersTextEmbedder
+from haystack.components.retrievers.in_memory import InMemoryEmbeddingRetriever
+from haystack.components.builders import ChatPromptBuilder
+from haystack.dataclasses import ChatMessage
+from haystack_integrations.components.generators.huggingface_api import HuggingFaceAPIChatGenerator
+
+template = [
+    ChatMessage.from_user(
+        """
+Answer the questions based on the given context.
+
+Context:
+{% for document in documents %}
+    {{ document.content }}
+{% endfor %}
+
+Question: {{ question }}
+Answer:
+"""
+    )
+]
+pipe = Pipeline()
+pipe.add_component("embedder", SentenceTransformersTextEmbedder(model="sentence-transformers/all-MiniLM-L6-v2"))
+pipe.add_component("retriever", InMemoryEmbeddingRetriever(document_store=document_store))
+pipe.add_component("chat_prompt_builder", ChatPromptBuilder(template=template))
+pipe.add_component(
+    "llm",
+    HuggingFaceAPIChatGenerator(
+        api_type="serverless_inference_api",
+        api_params={"model": "Qwen/Qwen3.5-9B", "provider": "together"},
+        generation_kwargs={"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}
+    ),
+)
+
+pipe.connect("embedder.embedding", "retriever.query_embedding")
+pipe.connect("retriever", "chat_prompt_builder.documents")
+pipe.connect("chat_prompt_builder.prompt", "llm.messages")
+Try it out yourself by running the code below. If all has gone well, you should have a complete shopping list from all the recipe sources. 🧂🥥🧄
+
+question = (
+    "What ingredients would I need to make vegan keto eggplant lasagna, vegan persimmon flan, and vegan hemp cheese?"
+)
+
+pipe.run({"embedder": {"text": question}, "chat_prompt_builder": {"question": question}})
+{’llm’: {‘replies’: [ChatMessage(_role=<ChatRole.ASSISTANT: ‘assistant’>, _content=[TextContent(text=‘To make vegan keto eggplant lasagna, vegan persimmon flan, and vegan hemp cheese, you would need the following ingredients:\n\n### Vegan Keto Eggplant Lasagna\n- 2 large eggplants\n- Salt (Hella salt)\n- 1/2 cup store-bought vegan mozzarella for topping\n- Pesto (ingredients: 4 oz basil, 1/4 cup almonds, 1/4 cup nutritional yeast, 1/4 cup olive oil, 1 recipe vegan pesto)\n- Spinach Tofu Ricotta (14 oz firm or extra firm tofu, 10 oz spinach, juice of 1 lemon, garlic powder to taste, salt to taste)\n- Macadamia Nut Cheese (1 cup macadamia nuts, 1/4 cup nutritional yeast, 1/4 cup olive oil, 1 recipe vegan pesto, 1 recipe spinach tofu ricotta, 1 tsp garlic powder, juice of half a lemon, salt to taste)\n\n### Vegan Persimmon Flan\n- 2 average-sized fuyu persimmons, strained\n- 1 tbsp cornstarch\n- 1/2 tsp agar agar\n- 1 tbsp agave nectar, or to taste\n- 2 tbsp granulated sugar\n- 1/4 cup coconut creme\n- 1/2 cup almond milk\n- 1/2 tsp vanilla\n\n### Vegan Hemp Cheese\n- 1/2 cup sunflower seeds\n- 1/2 cup hemp hearts\n- 1.5 teaspoons miso paste\n- 1 tsp nutritional yeast\n- 1/4 cup rejuvelac\n- 1/4th teaspoon salt, or to taste\n\n### Additional Tools and Notes\n- Casserole dish (9 x 13)\n- 2 ramekins\n- Blender or food processor\n- Saucepan\n- Immersion blender (optional)\n- Clean glass bowl\n- Rubber band\n- Dish towel\n- Knife\n- Hot water bath method (for flan)\n\nThese ingredients and tools will allow you to prepare all three dishes as described in the provided context.’)], _name=None, _meta={‘model’: ‘Qwen/Qwen3.5-9B’, ‘finish_reason’: ‘stop’, ‘index’: 0, ‘usage’: {‘prompt_tokens’: 2031, ‘completion_tokens’: 446}})]}}

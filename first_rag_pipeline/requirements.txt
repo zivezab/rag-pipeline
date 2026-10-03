@@ -1,0 +1,5 @@
+haystack-ai
+mistral-haystack
+transformers-haystack
+datasets>=2.6.1
+sentence-transformers-haystack

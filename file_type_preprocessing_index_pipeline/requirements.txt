@@ -1,0 +1,7 @@
+haystack-ai
+huggingface-api-haystack
+sentence-transformers-haystack
+markdown-it-py
+mdit_plain
+pypdf
+fpdf2
