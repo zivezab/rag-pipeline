@@ -9,6 +9,9 @@ chunks, embeds them, and writes them to an `InMemoryDocumentStore`.
 Optionally builds a RAG query pipeline on top using the Hugging Face
 Inference API.
 
+> New to this? See [`STUDY_NOTES.md`](STUDY_NOTES.md) for an explanation of
+> the preprocessing/chunking concepts and Haystack components used here.
+
 ## Setup
 
 One-off setup script (creates `.venv` and installs `requirements.txt`,

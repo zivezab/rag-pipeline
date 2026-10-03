@@ -9,6 +9,9 @@ answers questions about it with a retrieval-augmented generation (RAG)
 pipeline: `SentenceTransformersTextEmbedder` → `InMemoryEmbeddingRetriever`
 → `ChatPromptBuilder` → a `ChatGenerator`.
 
+> New to this? See [`STUDY_NOTES.md`](STUDY_NOTES.md) for an explanation of
+> the RAG concepts and Haystack components used here.
+
 ## Setup
 
 One-off setup script (creates `.venv` and installs `requirements.txt`,

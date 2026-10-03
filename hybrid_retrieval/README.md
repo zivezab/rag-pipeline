@@ -8,6 +8,9 @@ dataset with dense embeddings, then runs a hybrid retrieval pipeline that
 combines BM25 keyword search and embedding-based dense retrieval, merging
 and reranking both result sets with a cross-encoder similarity ranker.
 
+> New to this? See [`STUDY_NOTES.md`](STUDY_NOTES.md) for an explanation of
+> the retrieval/reranking concepts and Haystack components used here.
+
 ## Setup
 
 One-off setup script (creates `.venv` and installs `requirements.txt`,

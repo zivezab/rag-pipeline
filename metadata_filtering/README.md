@@ -12,6 +12,9 @@ filter (`version > 1.21` AND `date > 2023-11-07`).
 
 No API keys or external downloads are required — everything runs locally.
 
+> New to this? See [`STUDY_NOTES.md`](STUDY_NOTES.md) for an explanation of
+> the filtering concepts and Haystack components used here.
+
 ## Setup
 
 One-off setup script (creates `.venv` and installs `requirements.txt`,
